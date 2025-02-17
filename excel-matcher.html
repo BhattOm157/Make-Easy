@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Excel Multi-Column Matcher</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        .file-container,
+        .comparison-controls,
+        .results {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .column-mapping-group {
+            margin: 15px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+
+        .file-info {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            overflow-wrap: break-word;
+        }
+
+        button {
+            padding: 8px 15px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+
+        button.remove-btn {
+            background-color: #f44336;
+            width: 100px;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        select {
+            min-width: 200px;
+            padding: 5px;
+            margin: 5px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #4CAF50;
+            color: white;
+            position: sticky;
+            top: 0;
+            width: 60px !important;
+            display: inline-masonry;
+            overflow-wrap: anywhere;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        .mismatch {
+            background-color: #ffebee;
+        }
+
+        .match {
+            background-color: #e8f5e9;
+        }
+
+        .key-column {
+            background-color: #fffde7;
+        }
+
+        .comparison-group {
+            border-left: 3px solid #4CAF50;
+            margin: 10px 0;
+            padding-left: 10px;
+        }
+
+        .results-table {
+            overflow-x: scroll;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Excel Multi-Column Matcher</h1>
+
+    <div class="file-container">
+        <h3>Upload Excel Files</h3>
+        <input type="file" id="fileInput" accept=".xlsx,.xls" multiple>
+        <button onclick="clearFiles()">Clear All Files</button>
+        <div id="fileList"></div>
+    </div>
+
+    <div class="comparison-controls">
+        <h3>Column Selection</h3>
+        <div class="column-mapping-group">
+            <h4>Key Column (for matching records)</h4>
+            <div id="keyColumnMapping"></div>
+        </div>
+
+        <div class="column-mapping-group">
+            <h4>Columns to Compare</h4>
+            <div id="columnMappingGroups"></div>
+            <button onclick="addComparisonGroup()">Add Another Column Group</button>
+        </div>
+
+        <button onclick="compareFiles()">Compare Data</button>
+    </div>
+
+    <div id="results" class="results">
+        <h3>Comparison Results</h3>
+        <div id="comparisonResults"></div>
+    </div>
+
+    <script>
+        let uploadedFiles = [];
+        let comparisonGroups = [];
+
+        document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+
+        function handleFileUpload(event) {
+            const files = event.target.files;
+
+            for (let file of files) {
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+
+                    uploadedFiles.push({
+                        name: file.name,
+                        data: jsonData
+                    });
+
+                    updateFileList();
+                    updateColumnMappings();
+                };
+
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function updateFileList() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+
+            uploadedFiles.forEach((file, index) => {
+                const fileInfo = document.createElement('div');
+                fileInfo.className = 'file-info';
+                fileInfo.innerHTML = `
+                    <strong>File ${index + 1}:</strong> ${file.name}
+                    <label>Start Row: <input type="number" value="0" min="0" onchange="updateStartRow(${index}, this.value)"></label>
+                    <button class="remove-btn" onclick="removeFile(${index})">Remove</button>
+                `;
+                fileList.appendChild(fileInfo);
+            });
+        }
+
+        function updateColumnMappings() {
+            updateKeyColumnMapping();
+            updateComparisonGroups();
+        }
+
+        function updateKeyColumnMapping() {
+            const mappingDiv = document.getElementById('keyColumnMapping');
+            mappingDiv.innerHTML = '';
+
+            if (uploadedFiles.length < 2) {
+                mappingDiv.innerHTML = '<p>Please upload at least 2 files to compare</p>';
+                return;
+            }
+
+            uploadedFiles.forEach((file, index) => {
+                const selector = document.createElement('div');
+                selector.innerHTML = `
+                    <label>File ${index + 1} Key Column (e.g., Enrollment ID):</label>
+                    <select id="key_column_${index}" class="column-select">
+                        <option value="">Select Key Column</option>
+                        ${getColumnOptions(file.data[0])}
+                    </select>
+                `;
+                mappingDiv.appendChild(selector);
+            });
+        }
+
+        function addComparisonGroup() {
+            comparisonGroups.push({
+                id: Date.now(),
+                name: `Comparison Group ${comparisonGroups.length + 1}`
+            });
+            updateComparisonGroups();
+        }
+
+        function updateComparisonGroups() {
+            const groupsContainer = document.getElementById('columnMappingGroups');
+            groupsContainer.innerHTML = '';
+
+            if (uploadedFiles.length < 2) {
+                groupsContainer.innerHTML = '<p>Please upload at least 2 files to compare</p>';
+                return;
+            }
+
+            if (comparisonGroups.length === 0) {
+                addComparisonGroup();
+                return;
+            }
+
+            comparisonGroups.forEach((group, groupIndex) => {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'comparison-group';
+                groupDiv.innerHTML = `
+                    <h4>${group.name}</h4>
+                    ${uploadedFiles.map((file, fileIndex) => `
+                        <div>
+                            <label>File ${fileIndex + 1} Column:</label>
+                            <select id="compare_group_${groupIndex}_file_${fileIndex}" class="column-select">
+                                <option value="">Select Column</option>
+                                ${getColumnOptions(file.data[0])}
+                            </select>
+                        </div>
+                    `).join('')}
+                    <button class="remove-btn" onclick="removeComparisonGroup(${groupIndex})">Remove Group</button>
+                `;
+                groupsContainer.appendChild(groupDiv);
+            });
+        }
+
+        function removeComparisonGroup(index) {
+            comparisonGroups.splice(index, 1);
+            updateComparisonGroups();
+        }
+
+        function getColumnOptions(headers) {
+            if (!headers) return '';
+            return headers.map((header, index) =>
+                `<option value="${index}">${header || `Column ${index + 1}`}</option>`
+            ).join('');
+        }
+
+        function compareFiles() {
+            if (uploadedFiles.length < 2) {
+                alert('Please upload at least 2 files to compare');
+                return;
+            }
+
+            // Get key columns
+            const keyColumns = uploadedFiles.map((_, index) => {
+                const select = document.querySelector(`#key_column_${index}`);
+                return select ? parseInt(select.value) : null;
+            });
+
+            if (keyColumns.some(col => isNaN(col))) {
+                alert('Please select key columns for all files');
+                return;
+            }
+
+            // Get comparison columns for each group
+            const comparisonColumns = comparisonGroups.map((_, groupIndex) =>
+                uploadedFiles.map((_, fileIndex) => {
+                    const select = document.querySelector(`#compare_group_${groupIndex}_file_${fileIndex}`);
+                    return select ? parseInt(select.value) : null;
+                })
+            );
+
+            if (comparisonColumns.some(group => group.some(col => isNaN(col)))) {
+                alert('Please select comparison columns for all files in all groups');
+                return;
+            }
+
+            // Create lookup tables for each file
+            const dataTables = uploadedFiles.map((file, fileIndex) => {
+                const lookup = new Map();
+                for (let i = 1; i < file.data.length; i++) {
+                    const row = file.data[i];
+                    const keyValue = row[keyColumns[fileIndex]];
+                    if (keyValue !== undefined && keyValue !== null) {
+                        const values = comparisonColumns.map(group => row[group[fileIndex]]);
+                        lookup.set(keyValue.toString(), values);
+                    }
+                }
+                return lookup;
+            });
+
+            // Collect all unique keys
+            const allKeys = new Set();
+            dataTables.forEach(table => {
+                for (const key of table.keys()) {
+                    allKeys.add(key);
+                }
+            });
+
+            // Compare data
+            const results = [];
+            for (const key of allKeys) {
+                const fileValues = dataTables.map(table => table.get(key));
+                const groupResults = [];
+
+                for (let groupIndex = 0; groupIndex < comparisonColumns.length; groupIndex++) {
+                    const groupValues = fileValues.map(values => values ? values[groupIndex] : null);
+                    const allGroupValuesMatch = groupValues.every(v => v === groupValues[0]);
+
+                    groupResults.push({
+                        values: groupValues,
+                        matches: allGroupValuesMatch
+                    });
+                }
+
+                results.push({
+                    key: key,
+                    groups: groupResults
+                });
+            }
+
+            displayResults(results, keyColumns, comparisonColumns);
+        }
+
+        function displayResults(results, keyColumns, comparisonColumns) {
+    const resultsDiv = document.getElementById('comparisonResults');
+
+    if (results.length === 0) {
+        resultsDiv.innerHTML = '<p>No matching data found to compare!</p>';
+        return;
+    }
+
+    const statistics = comparisonGroups.map((group, index) => {
+        const groupResults = results.map(r => r.groups[index]);
+        return {
+            name: group.name,
+            total: results.length,
+            matches: groupResults.filter(g => g.matches).length,
+            mismatches: groupResults.filter(g => !g.matches).length
+        };
+    });
+
+    let html = '<div style="margin-bottom: 20px">';
+    statistics.forEach(stat => {
+        html += `
+            <div style="margin-bottom: 10px">
+                <strong>${stat.name}:</strong>
+                <ul>
+                    <li>Total Records: ${stat.total}</li>
+                    <li>Matching Records: ${stat.matches}</li>
+                    <li>Mismatched Records: ${stat.mismatches}</li>
+                </ul>
+            </div>
+        `;
+    });
+    html += '</div>';
+
+    html += '<div class="results-table"><table>';
+    html += '<tr><th>Sr.</th>';
+        html += '<th>Key Value</th>';
+
+    comparisonGroups.forEach((group, groupIndex) => {
+        uploadedFiles.forEach((file, fileIndex) => {
+            const columnHeader = file.data[0][comparisonColumns[groupIndex][fileIndex]] ||
+                `Column ${comparisonColumns[groupIndex][fileIndex] + 1}`;
+            html += `<th>${file.name} - ${columnHeader}</th>`;
+        });
+    });
+    html += '</tr>';
+
+    let index = 1;
+    results.forEach(result => {
+        html += '<tr>';
+        html += `<td class="key-column">${index++}</td>`;
+        html += `<td class="key-column">${result.key}</td>`;
+
+        result.groups.forEach(group => {
+            const rowClass = group.values.every((val, i, arr) => 
+                parseFloat(val) == parseFloat(arr[0]) || val.toString().toLowerCase() === arr[0].toString().toLowerCase()
+            ) ? 'match' : 'mismatch';
+            group.values.forEach(value => {
+                const formattedValue = (value !== undefined && value !== null) ? value.toString().trim() : 'Not Found';
+                html += `<td class="${rowClass}">${formattedValue}</td>`;
+            });
+        });
+
+        html += '</tr>';
+    });
+
+    html += '</table></div>';
+    resultsDiv.innerHTML = html;
+}
+        function removeFile(index) {
+            uploadedFiles.splice(index, 1);
+            updateFileList();
+            updateColumnMappings();
+        }
+
+        function clearFiles() {
+            uploadedFiles = [];
+            comparisonGroups = [];
+            document.getElementById('fileInput').value = '';
+            updateFileList();
+            updateColumnMappings();
+            document.getElementById('comparisonResults').innerHTML = '';
+        }
+
+        function updateStartRow(fileIndex, value) {
+            const startRow = parseInt(value);
+            if (!isNaN(startRow) && startRow >= 0) {
+                uploadedFiles[fileIndex].data = uploadedFiles[fileIndex].data.slice(startRow);
+                updateColumnMappings();
+            }
+        }
+
+        // Initialize first comparison group
+        addComparisonGroup();
+    </script>
+</body>
+
+</html>
