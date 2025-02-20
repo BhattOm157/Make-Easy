@@ -807,8 +807,8 @@
                 result.groups.forEach(group => {
                     const rowClass = group.values.every((val, i, arr) => {
                         // Convert values to floats and round to two decimal places for comparison
-                        const firstValue = parseFloat(arr[0]).toFixed(1);
-                        const currentValue = parseFloat(val).toFixed(1);
+                        const firstValue = parseFloat(arr[0]).toFixed(2);
+                        const currentValue = parseFloat(val).toFixed(2);
                         return currentValue === firstValue || val.toString().toLowerCase() === arr[0].toString().toLowerCase();
                     }) ? 'match' : 'mismatch';
 
