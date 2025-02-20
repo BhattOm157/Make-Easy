@@ -805,14 +805,19 @@
                 html += `<td class="key-column">${result.key}</td>`;
 
                 result.groups.forEach(group => {
-                    const rowClass = group.values.every((val, i, arr) =>
-                        parseFloat(val) == parseFloat(arr[0]) || val.toString().toLowerCase() === arr[0].toString().toLowerCase()
-                    ) ? 'match' : 'mismatch';
+                    const rowClass = group.values.every((val, i, arr) => {
+                        // Convert values to floats and round to two decimal places for comparison
+                        const firstValue = parseFloat(arr[0]).toFixed(2);
+                        const currentValue = parseFloat(val).toFixed(2);
+                        return currentValue === firstValue || val.toString().toLowerCase() === arr[0].toString().toLowerCase();
+                    }) ? 'match' : 'mismatch';
+
                     group.values.forEach(value => {
                         const formattedValue = (value !== undefined && value !== null) ? value.toString().trim() : 'Not Found';
                         html += `<td class="${rowClass}">${formattedValue}</td>`;
                     });
                 });
+
 
                 html += '</tr>';
             });
