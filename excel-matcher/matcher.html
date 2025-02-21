@@ -151,10 +151,12 @@
         }
 
         .match {
+            color: #fff;
             background-color: #3a7e4e;
         }
 
         .mismatch {
+            color: #fff;
             background-color: #cf5050;
         }
 
@@ -283,9 +285,9 @@
             color: var(--toggle-input-text);
             border: none;
             font-weight: 600;
-            border-radius: 20%;
-            width: 50px;
-            height: 50px;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -451,12 +453,12 @@
                     });
 
                     updateFileList();
+                    updateColumnMappings();
                 };
 
                 reader.readAsArrayBuffer(file);
             }
         }
-
         function updateFileList() {
             fileList.innerHTML = '';
 
@@ -531,7 +533,18 @@
             updateComparisonGroups();
         }
 
-
+        // Initialize and load comparison groups from cache
+        function initializeComparisonGroups() {
+            const storedGroups = JSON.parse(localStorage.getItem('comparisonGroups') || '[]');
+            if (storedGroups.length > 0) {
+                comparisonGroups = storedGroups;
+            } else {
+                // If no stored groups, create default first group
+                addComparisonGroup();
+            }
+            updateComparisonGroups();
+        }
+        // Enhanced key column mapping function
         function updateKeyColumnMapping() {
             const mappingDiv = document.getElementById('keyColumnMapping');
             mappingDiv.innerHTML = '';
@@ -543,49 +556,90 @@
 
             const storedSelections = JSON.parse(localStorage.getItem('keyColumnSelections') || '{}');
 
-            uploadedFiles.forEach((file, index) => {
+            uploadedFiles.forEach((file, fileIndex) => {
                 const selector = document.createElement('div');
                 selector.innerHTML = `
-            <label>File ${index + 1} Key Column:</label>
-            <select id="key_column_${index}" class="column-select" onchange="cacheKeyColumnSelection(${index}, this.value)">
+            <label>File ${fileIndex + 1} Key Column:</label>
+            <select id="key_column_${fileIndex}" class="column-select" onchange="cacheKeyColumnSelection(${fileIndex}, this.value)">
                 <option value="">Select Key Column</option>
                 ${getColumnOptions(file.data[0])}
             </select>
         `;
                 mappingDiv.appendChild(selector);
 
-                // Pre-select cached value if available
+                // Try to match stored column names
                 const selectElement = selector.querySelector('select');
-                if (storedSelections[file.name]) {
-                    selectElement.value = storedSelections[file.name];
-                }
+                const currentFileColumns = file.data[0];
+
+                Object.entries(storedSelections).forEach(([_, columnName]) => {
+                    const matchingColumnIndex = currentFileColumns.findIndex(
+                        col => col && col.toString().toLowerCase() === columnName.toString().toLowerCase()
+                    );
+
+                    if (matchingColumnIndex !== -1) {
+                        selectElement.value = matchingColumnIndex;
+                        cacheKeyColumnSelection(fileIndex, matchingColumnIndex);
+                    }
+                });
             });
         }
 
+        // Enhanced key column caching function
         function cacheKeyColumnSelection(fileIndex, columnIndex) {
             const storedSelections = JSON.parse(localStorage.getItem('keyColumnSelections') || '{}');
-            storedSelections[uploadedFiles[fileIndex].name] = columnIndex;
+            const columnName = uploadedFiles[fileIndex].data[0][columnIndex];
+            storedSelections[uploadedFiles[fileIndex].name] = columnName;
             localStorage.setItem('keyColumnSelections', JSON.stringify(storedSelections));
         }
 
         function addComparisonGroup() {
             const newGroupId = Date.now();
-            comparisonGroups.push({
+            const newGroup = {
                 id: newGroupId,
                 name: `Comparison Group ${comparisonGroups.length + 1}`
-            });
+            };
 
-            // Update local storage with empty selections for new groups
-            let storedSelections = JSON.parse(localStorage.getItem('comparisonColumnSelections') || '{}');
-            uploadedFiles.forEach(file => {
-                if (!storedSelections[file.name]) {
-                    storedSelections[file.name] = {};
-                }
-                storedSelections[file.name][comparisonGroups.length - 1] = ""; // Initialize empty selection
-            });
+            comparisonGroups.push(newGroup);
+
+            // Save groups to localStorage
+            localStorage.setItem('comparisonGroups', JSON.stringify(comparisonGroups));
+
+            // Initialize empty selections for the new group
+            const storedSelections = JSON.parse(localStorage.getItem('comparisonColumnSelections') || '{}');
+            if (!storedSelections[comparisonGroups.length - 1]) {
+                storedSelections[comparisonGroups.length - 1] = {};
+            }
             localStorage.setItem('comparisonColumnSelections', JSON.stringify(storedSelections));
 
             updateComparisonGroups();
+        }
+
+        // Function to apply cached selections and match column names
+        function applyColumnSelections(groupIndex, storedSelections) {
+            uploadedFiles.forEach((file, fileIndex) => {
+                const selectElement = document.getElementById(`compare_group_${groupIndex}_file_${fileIndex}`);
+                if (!selectElement) return;
+
+                const currentFileColumns = file.data[0];
+                let matchFound = false;
+
+                // Check stored selections for this specific group
+                if (storedSelections[groupIndex]) {
+                    Object.entries(storedSelections[groupIndex]).forEach(([_, columnName]) => {
+                        // Find the index of the matching column name
+                        const matchingColumnIndex = currentFileColumns.findIndex(
+                            col => col && col.toString().toLowerCase() === columnName.toString().toLowerCase()
+                        );
+
+                        if (matchingColumnIndex !== -1 && !matchFound) {
+                            selectElement.value = matchingColumnIndex;
+                            matchFound = true;
+                            // Cache the new selection
+                            cacheComparisonSelection(groupIndex, fileIndex, matchingColumnIndex);
+                        }
+                    });
+                }
+            });
         }
 
 
@@ -600,71 +654,72 @@
 
             const storedSelections = JSON.parse(localStorage.getItem('comparisonColumnSelections') || '{}');
 
-            // Create a mapping of column names to their indices for each file
-            const columnNamesMap = uploadedFiles.map(file => file.data[0]);
-
-            // Generate groups based on the number of groups already stored in local storage
             comparisonGroups.forEach((group, groupIndex) => {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'comparison-group';
-                groupDiv.innerHTML = `
-            <h4>${group.name}</h4>
-            ${uploadedFiles.map((file, fileIndex) => `            
+
+                let groupHTML = `<h4>${group.name}</h4>`;
+
+                uploadedFiles.forEach((file, fileIndex) => {
+                    const currentFileColumns = file.data[0];
+
+                    groupHTML += `
                 <div>
                     <label>File ${fileIndex + 1} Column:</label>
                     <select id="compare_group_${groupIndex}_file_${fileIndex}" class="column-select"
                         onchange="cacheComparisonSelection(${groupIndex}, ${fileIndex}, this.value)">
                         <option value="">Select Column</option>
-                        ${getColumnOptions(file.data[0])}
+                        ${getColumnOptions(currentFileColumns)}
                     </select>
                 </div>
-            `).join('')}
-            <button class="remove-btn" onclick="removeComparisonGroup(${groupIndex})">Remove Group</button>
-        `;
-                groupsContainer.appendChild(groupDiv);
-            });
-
-            // Pre-select cached values and matching columns
-            comparisonGroups.forEach((group, groupIndex) => {
-                uploadedFiles.forEach((file, fileIndex) => {
-                    const selectElement = document.getElementById(`compare_group_${groupIndex}_file_${fileIndex}`);
-                    const groupSelections = storedSelections[groupIndex] || {};
-
-                    // Pre-select from cached selections
-                    if (groupSelections[file.name]) {
-                        selectElement.value = groupSelections[file.name];
-                    }
-
-                    // Automatically select matching columns by name if the column names match the cached selections
-                    const currentFileColumns = file.data[0];
-                    const cachedColumnNames = Object.keys(groupSelections);
-                    cachedColumnNames.forEach(cachedColumnName => {
-                        if (currentFileColumns.includes(cachedColumnName)) {
-                            selectElement.value = cachedColumnName; // Set to the cached column name
-                        }
-                    });
+            `;
                 });
+
+                groupHTML += `<button class="remove-btn" onclick="removeComparisonGroup(${groupIndex})">Remove Group</button>`;
+                groupDiv.innerHTML = groupHTML;
+                groupsContainer.appendChild(groupDiv);
+
+                // Apply selections for this group
+                applyColumnSelections(groupIndex, storedSelections);
             });
         }
 
-
+        // Enhanced caching function to store column names instead of indices
         function cacheComparisonSelection(groupIndex, fileIndex, selectedValue) {
             const storedSelections = JSON.parse(localStorage.getItem('comparisonColumnSelections') || '{}');
 
-            // Initialize the group if it doesn't exist
             if (!storedSelections[groupIndex]) {
                 storedSelections[groupIndex] = {};
             }
 
-            // Store the selected value for the specific group and file
-            storedSelections[groupIndex][uploadedFiles[fileIndex].name] = selectedValue;
+            // Store the column name instead of the index
+            const columnName = uploadedFiles[fileIndex].data[0][selectedValue];
+            storedSelections[groupIndex][uploadedFiles[fileIndex].name] = columnName;
 
-            // Save back to localStorage
             localStorage.setItem('comparisonColumnSelections', JSON.stringify(storedSelections));
         }
 
         function removeComparisonGroup(index) {
             comparisonGroups.splice(index, 1);
+
+            // Update stored groups
+            localStorage.setItem('comparisonGroups', JSON.stringify(comparisonGroups));
+
+            // Remove selections for this group
+            const storedSelections = JSON.parse(localStorage.getItem('comparisonColumnSelections') || '{}');
+            delete storedSelections[index];
+
+            // Reindex remaining groups
+            const newSelections = {};
+            Object.entries(storedSelections).forEach(([groupIndex, selections]) => {
+                if (parseInt(groupIndex) > index) {
+                    newSelections[parseInt(groupIndex) - 1] = selections;
+                } else if (parseInt(groupIndex) < index) {
+                    newSelections[groupIndex] = selections;
+                }
+            });
+
+            localStorage.setItem('comparisonColumnSelections', JSON.stringify(newSelections));
             updateComparisonGroups();
         }
 
@@ -805,19 +860,14 @@
                 html += `<td class="key-column">${result.key}</td>`;
 
                 result.groups.forEach(group => {
-                    const rowClass = group.values.every((val, i, arr) => {
-                        // Convert values to floats and round to two decimal places for comparison
-                        const firstValue = parseFloat(arr[0]).toFixed(2);
-                        const currentValue = parseFloat(val).toFixed(2);
-                        return currentValue === firstValue || val.toString().toLowerCase() === arr[0].toString().toLowerCase();
-                    }) ? 'match' : 'mismatch';
-
+                    const rowClass = group.values.every((val, i, arr) =>
+                        parseFloat(val) == parseFloat(arr[0]) || val.toString().toLowerCase() === arr[0].toString().toLowerCase()
+                    ) ? 'match' : 'mismatch';
                     group.values.forEach(value => {
                         const formattedValue = (value !== undefined && value !== null) ? value.toString().trim() : 'Not Found';
                         html += `<td class="${rowClass}">${formattedValue}</td>`;
                     });
                 });
-
 
                 html += '</tr>';
             });
@@ -833,12 +883,17 @@
 
         function clearFiles() {
             uploadedFiles = [];
-            comparisonGroups = [];
+            // Don't clear comparison groups, just clear the file list
             document.getElementById('fileInput').value = '';
             updateFileList();
             updateColumnMappings();
             document.getElementById('comparisonResults').innerHTML = '';
         }
+
+        // Call this when the page loads
+        window.addEventListener('load', function () {
+            initializeComparisonGroups();
+        });
 
         function updateStartRow(fileIndex, value) {
             const startRow = parseInt(value);
