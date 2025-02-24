@@ -860,14 +860,23 @@
                 html += `<td class="key-column">${result.key}</td>`;
 
                 result.groups.forEach(group => {
-                    const rowClass = group.values.every((val, i, arr) =>
-                        parseFloat(val) == parseFloat(arr[0]) || val.toString().toLowerCase() === arr[0].toString().toLowerCase()
-                    ) ? 'match' : 'mismatch';
+                    // Check if all values in the group match the first value numerically or case-insensitively
+                    const rowClass = group.values.every((val, i, arr) => {
+                        if (val === null || val === undefined || arr[0] === null || arr[0] === undefined) {
+                            return val === arr[0]; // Ensure null matches null, undefined matches undefined
+                        }
+                        return parseFloat(val) == parseFloat(arr[0]) || val.toString().toLowerCase() === arr[0].toString().toLowerCase();
+                    }) ? 'match' : 'mismatch';
+
+                    // Build HTML for each value in the group
                     group.values.forEach(value => {
+                        // Format the value for display in HTML, defaulting to 'Not Found' if value is null or undefined
                         const formattedValue = (value !== undefined && value !== null) ? value.toString().trim() : 'Not Found';
+                        // Append HTML with appropriate row class
                         html += `<td class="${rowClass}">${formattedValue}</td>`;
                     });
                 });
+
 
                 html += '</tr>';
             });
